@@ -50,6 +50,9 @@ class PoseDataset(CocoDetection):
             jitter_probability (float): Probability with which jitter is applied to the bounding box
             std (float): standard deviation of the jitter.
         """
+        # FIXME just for testing, cause this ann file doesnt exist
+        ann_file = '_synt.'.join(str(ann_file).rsplit('.', maxsplit=1))
+
         super(PoseDataset, self).__init__(img_folder, ann_file, synthetic_background,
                                             cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
         self._transforms = transforms

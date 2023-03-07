@@ -33,7 +33,7 @@ from evaluation_tools.metrics import get_src_permutation_idx, calc_rotation_erro
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int,
+                    device: torch.device, epoch: int, accelerator,
                     max_norm: float = 0):
     model.train()
     criterion.train()
@@ -46,7 +46,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True, accelerate=bool(accelerator))
     samples, targets = prefetcher.next()
 
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
@@ -73,7 +73,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
 
         optimizer.zero_grad()
-        losses.backward()
+        accelerator.backward()
         if max_norm > 0:
             grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         else:

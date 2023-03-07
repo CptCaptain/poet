@@ -4,15 +4,10 @@
 # Licensed under the BSD-2-Clause-License with no commercial use [see LICENSE for details]
 # ------------------------------------------------------------------------
 anchor_sizes:
--
   - 32
--
   - 64
--
   - 128
--
   - 256
--
   - 512
 backbone_str: resnet50-fpn
 input_resize:

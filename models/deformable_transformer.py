@@ -21,7 +21,9 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from deformable_attention import MSDeformAttn
+# from deformable_attention import MSDeformAttn
+# from MultiScaleDeformableAttention import MSDeformAttn    
+from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention as MSDeformAttn
 
 
 class DeformableTransformer(nn.Module):
@@ -56,7 +58,7 @@ class DeformableTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
         for m in self.modules():
             if isinstance(m, MSDeformAttn):
-                m._reset_parameters()
+                m.init_weights()
         xavier_uniform_(self.reference_points.weight.data, gain=1.0)
         constant_(self.reference_points.bias.data, 0.)
         normal_(self.level_embed)
@@ -174,7 +176,12 @@ class DeformableTransformerEncoderLayer(nn.Module):
         super().__init__()
 
         # self attention
-        self.self_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        self.self_attn = MSDeformAttn(
+                embed_dims=d_model, 
+                num_levels=n_levels, 
+                num_heads=n_heads, 
+                num_points=n_points, 
+                batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -198,7 +205,14 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
+        src2 = self.self_attn(
+                query=self.with_pos_embed(src, pos), 
+                reference_points=reference_points, 
+                value=src, 
+                spatial_shapes=spatial_shapes, 
+                level_start_index=level_start_index, 
+                key_padding_mask=padding_mask
+                )
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -245,7 +259,12 @@ class DeformableTransformerDecoderLayer(nn.Module):
         super().__init__()
 
         # cross attention
-        self.cross_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        self.cross_attn = MSDeformAttn(
+                embed_dims=d_model, 
+                num_levels=n_levels, 
+                num_heads=n_heads, 
+                num_points=n_points, 
+                batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -280,9 +299,13 @@ class DeformableTransformerDecoderLayer(nn.Module):
         tgt = self.norm2(tgt)
 
         # cross attention
-        tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
-                               reference_points,
-                               src, src_spatial_shapes, level_start_index, src_padding_mask)
+        tgt2 = self.cross_attn(
+                query=self.with_pos_embed(tgt, query_pos),
+                reference_points=reference_points,
+                value=src, 
+                spatial_shapes=src_spatial_shapes, 
+                level_start_index=level_start_index, 
+                key_padding_mask=src_padding_mask)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 

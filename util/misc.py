@@ -29,6 +29,8 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch import Tensor
 
+import wandb 
+
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 if float(torchvision.__version__[2:4]) < 5:
@@ -283,6 +285,10 @@ class MetricLogger(object):
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print('{} Total time: {} ({:.4f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
+        # self.log_to_wandb()
+        
+    def log_to_wandb(self):
+        wandb.log(meters)
 
 
 def get_sha():

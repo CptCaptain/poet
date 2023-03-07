@@ -10,6 +10,9 @@
 # Modified from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
+import sys
+
+print(sys.executable)
 
 import argparse
 import datetime
@@ -27,6 +30,16 @@ from data_utils import build_dataset
 from engine import train_one_epoch, pose_evaluate, bop_evaluate
 from models import build_model
 from evaluation_tools.pose_evaluator_init import build_pose_evaluator
+
+import wandb
+
+import lovely_tensors as lt
+
+lt.monkey_patch()
+
+from accelerate import Accelerator
+
+accelerator = Accelerator()
 
 
 def get_args_parser():
@@ -122,7 +135,7 @@ def get_args_parser():
                         help='Path to the dataset ')
     parser.add_argument('--train_set', default="train", type=str, help="Determine on which dataset split to train")
     parser.add_argument('--eval_set', default="test", type=str, help="Determine on which dataset split to evaluate")
-    parser.add_argument('--synt_background', default='/background/', type=str,
+    parser.add_argument('--synt_background', default=None, type=str,
                         help="Directory containing the background images from which to sample")
     parser.add_argument('--n_classes', default=21, type=int, help="Number of classes present in the dataset")
     parser.add_argument('--jitter_probability', default=0.5, type=float,
@@ -148,7 +161,7 @@ def get_args_parser():
                         help="Epoch interval after which the current checkpoint will be stored")
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--device', default='cuda',
+    parser.add_argument('--device', default=accelerator.device,
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
@@ -251,6 +264,11 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
+    model, optimizer, data_loader_train, lr_scheduler = accelerator.prepare(
+        model, optimizer, data_loader_train, lr_scheduler
+    )
+
+    wandb.watch(model)
     output_dir = Path(args.output_dir)
     # Load checkpoint
     if args.resume:
@@ -308,7 +326,8 @@ def main(args):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, accelerator)
+        wandb.log(train_stats)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -337,6 +356,7 @@ def main(args):
                          'epoch': epoch,
                          'n_parameters': n_parameters}
 
+        wandb.log(log_stats)
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -354,8 +374,10 @@ def main(args):
 
 
 if __name__ == '__main__':
+    wandb.init(entity='nkoch-aitastic', project='poet')
     parser = argparse.ArgumentParser('PoET training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+    wandb.config.update(args)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
