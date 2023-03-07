@@ -30,7 +30,7 @@ class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
                  activation="relu", return_intermediate_dec=False,
-                 num_feature_levels=4, dec_n_points=4,  enc_n_points=4):
+                 num_feature_levels=4, dec_n_points=4,  enc_n_points=4, reference_points='bbox'):
         super().__init__()
 
         self.d_model = d_model
@@ -48,7 +48,9 @@ class DeformableTransformer(nn.Module):
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
-        self.reference_points = nn.Linear(d_model, 2)
+        self._reference_points = reference_points
+        if self._reference_points != 'bbox':
+            self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
 
@@ -59,8 +61,9 @@ class DeformableTransformer(nn.Module):
         for m in self.modules():
             if isinstance(m, MSDeformAttn):
                 m.init_weights()
-        xavier_uniform_(self.reference_points.weight.data, gain=1.0)
-        constant_(self.reference_points.bias.data, 0.)
+        if self._reference_points != 'bbox':
+            xavier_uniform_(self.reference_points.weight.data, gain=1.0)
+            constant_(self.reference_points.bias.data, 0.)
         normal_(self.level_embed)
 
     def get_proposal_pos_embed(self, proposals):
@@ -156,6 +159,7 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
         else:
             query_embed, tgt = torch.split(query_embed, c, dim=2)
+
         if reference_points is None:
             reference_points = self.reference_points(query_embed).sigmoid()
         init_reference_out = reference_points
@@ -390,6 +394,7 @@ def build_deforamble_transformer(args):
         return_intermediate_dec=True,
         num_feature_levels=args.num_feature_levels,
         dec_n_points=args.dec_n_points,
-        enc_n_points=args.enc_n_points)
+        enc_n_points=args.enc_n_points,
+        reference_points=args.reference_points)
 
 
