@@ -91,20 +91,16 @@ def vis(img: np.ndarray, model_ids: List, ests: List[dict], models: Optional[dic
         :param models: Optional dict with model IDs and paths, to be used instead of model_ids
         :param K: 3x3 matrix with camera intrinsics
     """
-# Rendering mode.
-    renderer_modalities = []
-    if p['vis_rgb']:
-        renderer_modalities.append('rgb')
-    if p['vis_depth_diff'] or (p['vis_rgb'] and p['vis_rgb_resolve_visib']):
-        renderer_modalities.append('depth')
-    renderer_mode = '+'.join(renderer_modalities)
+    # Rendering mode.
+    # We only support RGB
+    renderer_mode = 'rgb'
 
-# Create a renderer.
+    # Create a renderer.
     width, height = img.shape[:2]
     ren = renderer.create_renderer(
           width, height, p['renderer_type'], mode=renderer_mode)
 
-# Load object models.
+    # Load object models.
     models = {}
     for obj_id in model_ids:
         misc.log('Loading 3D model of object {}...'.format(obj_id))
@@ -114,7 +110,7 @@ def vis(img: np.ndarray, model_ids: List, ests: List[dict], models: Optional[dic
             model_color = tuple(colors[(obj_id - 1) % len(colors)])
         ren.add_object(obj_id, model_path, surf_color=model_color)
 
-# Organize the pose estimates by scene, image and object.
+    # Organize the pose estimates by scene, image and object.
     misc.log('Organizing pose estimates...')
     ests_org = {}
     for est in ests:
