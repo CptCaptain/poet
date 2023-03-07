@@ -1,7 +1,7 @@
 # Original Author: Tomas Hodan (hodantom@cmp.felk.cvut.cz)
 # Center for Machine Perception, Czech Technical University in Prague
 #######################################################################
-# Adapted to work with non-BOP images
+# Adapted from bop_toolkit/scripts/vis_est_poses to work with non-BOP images
 
 """Visualizes object models in pose estimates saved in a BOP-like format."""
 
@@ -10,8 +10,6 @@ import numpy as np
 import itertools
 
 from bop_toolkit_lib import config
-from bop_toolkit_lib import dataset_params
-from bop_toolkit_lib import inout
 from bop_toolkit_lib import misc
 from bop_toolkit_lib import renderer
 from bop_toolkit_lib import visualization
@@ -54,16 +52,16 @@ p = {
             ],
 
         # Folder containing the BOP datasets.
-        'datasets_path': config.datasets_path,
+        # 'datasets_path': config.datasets_path,
 
         # Folder for output visualisations.
         'vis_path': os.path.join(config.output_path, 'vis_est_poses'),
 
         # Path templates for output images.
         'vis_rgb_tpath': os.path.join(
-            '{vis_path}', '{result_name}', '{scene_id:06d}', '{vis_name}.jpg'),
+            '{vis_path}', '{result_name}', '{img_name:06d}', '{vis_name}.jpg'),
         'vis_depth_diff_tpath': os.path.join(
-            '{vis_path}', '{result_name}', '{scene_id:06d}',
+            '{vis_path}', '{result_name}', '{img_name:06d}',
             '{vis_name}_depth_diff.jpg'),
         }
 ################################################################################
@@ -71,55 +69,50 @@ p = {
 
 # Load colors.
 colors_path = os.path.join(
-        os.path.dirname(visualization.__file__), 'colors.json')
+        os.path.dirname(visualization.__file__),
+        'colors.json'
+        )
 colors = inout.load_json(colors_path)
 
-for result_fname in p['result_filenames']:
-    misc.log('Processing: ' + result_fname)
-# Parse info about the method and the dataset from the filename.
-    result_name = os.path.splitext(os.path.basename(result_fname))[0]
-    result_info = result_name.split('_')
-    method = result_info[0]
-    dataset_info = result_info[1].split('-')
-    dataset = dataset_info[0]
-    split = dataset_info[1]
-    split_type = dataset_info[2] if len(dataset_info) > 2 else None
+# TODO fill with sensible content
+model_paths = {
+        'id': 'Path'
+        }
 
-# Load dataset parameters.
-    dp_split = dataset_params.get_split_params(
-          p['datasets_path'], dataset, split, split_type)
+def vis(img: np.ndarray, model_ids: List, ests: List[dict], models: Optional[dict] = None, K=None):
+    """ Visualizes the estimated poses of given objects in a given image
 
-    model_type = 'eval'
-    dp_model = dataset_params.get_model_params(
-          p['datasets_path'], dataset, model_type)
-
+        :param img: image as array (or similar, TBD)
+        :param model_ids: List of model ids that can be resolved into 3D models
+        :param ests: List of dictionaries with required keys:
+                - obj_id: Object ID (can be mapped to 3D model)
+                - R: 3x3 Rotation matrix
+                - t: 3x1 Translation matrix
+        :param models: Optional dict with model IDs and paths, to be used instead of model_ids
+        :param K: 3x3 matrix with camera intrinsics
+    """
 # Rendering mode.
     renderer_modalities = []
     if p['vis_rgb']:
-      renderer_modalities.append('rgb')
+        renderer_modalities.append('rgb')
     if p['vis_depth_diff'] or (p['vis_rgb'] and p['vis_rgb_resolve_visib']):
-      renderer_modalities.append('depth')
+        renderer_modalities.append('depth')
     renderer_mode = '+'.join(renderer_modalities)
 
 # Create a renderer.
-    width, height = dp_split['im_size']
+    width, height = img.shape[:2]
     ren = renderer.create_renderer(
           width, height, p['renderer_type'], mode=renderer_mode)
 
 # Load object models.
     models = {}
-    for obj_id in dp_model['obj_ids']:
-      misc.log('Loading 3D model of object {}...'.format(obj_id))
-    model_path = dp_model['model_tpath'].format(obj_id=obj_id)
-    model_color = None
-    if not p['vis_orig_color']:
-        model_color = tuple(colors[(obj_id - 1) % len(colors)])
-    ren.add_object(obj_id, model_path, surf_color=model_color)
-
-# Load pose estimates.
-    misc.log('Loading pose estimates...')
-    ests = inout.load_bop_results(
-          os.path.join(config.results_path, result_fname))
+    for obj_id in model_ids:
+        misc.log('Loading 3D model of object {}...'.format(obj_id))
+        model_path = dp_model['model_tpath'].format(obj_id=obj_id)
+        model_color = None
+        if not p['vis_orig_color']:
+            model_color = tuple(colors[(obj_id - 1) % len(colors)])
+        ren.add_object(obj_id, model_path, surf_color=model_color)
 
 # Organize the pose estimates by scene, image and object.
     misc.log('Organizing pose estimates...')
@@ -129,32 +122,9 @@ for result_fname in p['result_filenames']:
               est['im_id'], {}).setdefault(est['obj_id'], []).append(est)
 
     for scene_id, scene_ests in ests_org.items():
-
-      # Load info and ground-truth poses for the current scene.
-        scene_camera = inout.load_scene_camera(
-                dp_split['scene_camera_tpath'].format(scene_id=scene_id))
-        scene_gt = inout.load_scene_gt(
-                dp_split['scene_gt_tpath'].format(scene_id=scene_id))
-
         for im_ind, (im_id, im_ests) in enumerate(scene_ests.items()):
-
-            if im_ind % 10 == 0:
-                split_type_str = ' - ' + split_type if split_type is not None else ''
-            misc.log(
-                    'Visualizing pose estimates - method: {}, dataset: {}{}, scene: {}, '
-                    'im: {}'.format(method, dataset, split_type_str, scene_id, im_id))
-
-            # Intrinsic camera matrix.
-            K = scene_camera[im_id]['cam_K']
-
             im_ests_vis = []
             im_ests_vis_obj_ids = []
-            for obj_id, obj_ests in im_ests.items():
-
-              # Sort the estimates by score (in descending order).
-                obj_ests_sorted = sorted(
-                    obj_ests, key=lambda est: est['score'], reverse=True)
-
             # Select the number of top estimated poses to visualize.
             if p['n_top'] == 0:  # All estimates are considered.
                 n_top_curr = None
@@ -163,7 +133,8 @@ for result_fname in p['result_filenames']:
                 n_top_curr = n_gt
             else:  # Specified by the parameter n_top.
                 n_top_curr = p['n_top']
-            obj_ests_sorted = obj_ests_sorted[slice(0, n_top_curr)]
+            # We can't sort as all prediction of PoET have score 1.
+            obj_ests_sorted = obj_ests[slice(0, n_top_curr)]
 
             # Get list of poses to visualize.
             for est in obj_ests_sorted:
@@ -185,27 +156,6 @@ for result_fname in p['result_filenames']:
         if not p['vis_per_obj_id']:
           im_ests_vis = [list(itertools.chain.from_iterable(im_ests_vis))]
 
-        for ests_vis_id, ests_vis in enumerate(im_ests_vis):
-
-          # Load the color and depth images and prepare images for rendering.
-            rgb = None
-            if p['vis_rgb']:
-                if 'rgb' in dp_split['im_modalities']:
-                    rgb = inout.load_im(dp_split['rgb_tpath'].format(
-                        scene_id=scene_id, im_id=im_id))[:, :, :3]
-                elif 'gray' in dp_split['im_modalities']:
-                      gray = inout.load_im(dp_split['gray_tpath'].format(
-                          scene_id=scene_id, im_id=im_id))
-                      rgb = np.dstack([gray, gray, gray])
-                else:
-                      raise ValueError('RGB nor gray images are available.')
-
-        depth = None
-        if p['vis_depth_diff'] or (p['vis_rgb'] and p['vis_rgb_resolve_visib']):
-            depth = inout.load_depth(dp_split['depth_tpath'].format(
-                scene_id=scene_id, im_id=im_id))
-            depth *= scene_camera[im_id]['depth_scale']  # Convert to [mm].
-
         # Visualization name.
         if p['vis_per_obj_id']:
             vis_name = '{im_id:06d}_{obj_id:06d}'.format(
@@ -220,16 +170,9 @@ for result_fname in p['result_filenames']:
                     vis_path=p['vis_path'], result_name=result_name, scene_id=scene_id,
                     vis_name=vis_name)
 
-        # Path to the output depth difference visualization.
-        vis_depth_diff_path = None
-        if p['vis_depth_diff']:
-            vis_depth_diff_path = p['vis_depth_diff_tpath'].format(
-                    vis_path=p['vis_path'], result_name=result_name, scene_id=scene_id,
-                    vis_name=vis_name)
-
         # Visualization.
         visualization.vis_object_poses(
-                poses=ests_vis, K=K, renderer=ren, rgb=rgb, depth=depth,
+                poses=ests_vis, K=K, renderer=ren, rgb=img,
                 vis_rgb_path=vis_rgb_path, vis_depth_diff_path=vis_depth_diff_path,
                 vis_rgb_resolve_visib=p['vis_rgb_resolve_visib'])
 
