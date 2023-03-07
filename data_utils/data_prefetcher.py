@@ -37,6 +37,7 @@ class data_prefetcher():
             self.next_targets = None
             return
         if self.accelerate:
+            # just return when using accelerate, we don't need to explicitly push to device
             return
         # if record_stream() doesn't work, another option is to make sure device inputs are created
         # on the main stream.
@@ -74,7 +75,8 @@ class data_prefetcher():
         else:
             try:
                 samples, targets = next(self.loader)
-                samples, targets = to_cuda(samples, targets, self.device)
+                if not accelerate:
+                    samples, targets = to_cuda(samples, targets, self.device)
             except StopIteration:
                 samples = None
                 targets = None

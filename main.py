@@ -31,7 +31,7 @@ from engine import train_one_epoch, pose_evaluate, bop_evaluate
 from models import build_model
 from evaluation_tools.pose_evaluator_init import build_pose_evaluator
 
-import wandb
+# import wandb
 
 import lovely_tensors as lt
 
@@ -39,7 +39,7 @@ lt.monkey_patch()
 
 from accelerate import Accelerator
 
-accelerator = Accelerator()
+accelerator = Accelerator(log_with='wandb')
 
 
 def get_args_parser():
@@ -176,7 +176,7 @@ def get_args_parser():
 
 
 def main(args):
-    utils.init_distributed_mode(args)
+    # utils.init_distributed_mode(args)
 
     device = torch.device(args.device)
 
@@ -199,6 +199,10 @@ def main(args):
     # Build the dataset for training and validation
     dataset_train = build_dataset(image_set=args.train_set, args=args)
     dataset_val = build_dataset(image_set=args.eval_set, args=args)
+
+    # set distributed to false cause we use accelerate...
+    args.distributed = False
+    # at some point at least ...
 
     if args.distributed:
         if args.cache_mode:
@@ -264,11 +268,11 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
-    model, optimizer, data_loader_train, lr_scheduler = accelerator.prepare(
-        model, optimizer, data_loader_train, lr_scheduler
+    model, optimizer, data_loader_train, data_loader_val, lr_scheduler = accelerator.prepare(
+        model, optimizer, data_loader_train, data_loader_val, lr_scheduler
     )
 
-    wandb.watch(model)
+    # accelerator.watch(model)
     output_dir = Path(args.output_dir)
     # Load checkpoint
     if args.resume:
@@ -326,8 +330,8 @@ def main(args):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, accelerator)
-        wandb.log(train_stats)
+            model=model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, device=device, epoch=epoch, max_norm=args.clip_max_norm, accelerator=accelerator)
+        accelerator.log(train_stats)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -356,7 +360,7 @@ def main(args):
                          'epoch': epoch,
                          'n_parameters': n_parameters}
 
-        wandb.log(log_stats)
+        accelerator.log(log_stats)
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -374,10 +378,15 @@ def main(args):
 
 
 if __name__ == '__main__':
-    wandb.init(entity='nkoch-aitastic', project='poet')
+    # wandb.init(entity='nkoch-aitastic', project='poet')
     parser = argparse.ArgumentParser('PoET training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
-    wandb.config.update(args)
+    accelerator.init_trackers(
+            project_name='poet',
+            config=args,
+            )
+    # wandb.config.update(args)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
+    accelerator.end_training()

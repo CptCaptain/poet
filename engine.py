@@ -73,7 +73,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
 
         optimizer.zero_grad()
-        accelerator.backward()
+        accelerator.backward(losses)
         if max_norm > 0:
             grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         else:
@@ -90,7 +90,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    metrics = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    accelerator.log(metrics)
+    return metrics
 
 
 @torch.no_grad()
@@ -118,8 +120,8 @@ def pose_evaluate(model, matcher, pose_evaluator, data_loader, image_set, bbox_m
     processed_images = 0
     for samples, targets in data_loader:
         batch_start_time = time.time()
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # samples = samples.to(device)
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         outputs, n_boxes_per_sample = model(samples, targets)
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
 
@@ -154,12 +156,19 @@ def pose_evaluate(model, matcher, pose_evaluator, data_loader, image_set, bbox_m
 
         batch_total_time = time.time() - batch_start_time
         batch_total_time_str = str(datetime.timedelta(seconds=int(batch_total_time)))
-        processed_images = processed_images + len(targets)
-        remaining_images = n_images - processed_images
-        remaining_batches = remaining_images / bs
-        eta = batch_total_time * remaining_batches
-        eta_str = str(datetime.timedelta(seconds=int(eta)))
-        print("Processed {}/{} \t Batch Time: {} \t ETA: {}".format(processed_images, n_images, batch_total_time_str, eta_str))
+        try:
+            processed_images = processed_images + len(targets)
+            remaining_images = n_images - processed_images
+            remaining_batches = remaining_images / bs
+            eta = batch_total_time * remaining_batches
+            eta_str = str(datetime.timedelta(seconds=int(eta)))
+            print("Processed {}/{} \t Batch Time: {} \t ETA: {}".format(processed_images, n_images, batch_total_time_str, eta_str))
+        except TypeError:
+            # print(f'{targets=}')
+            # print(f'{data_loader=}')
+            # print(f'{dir(data_loader)}')
+            print(f'{data_loader.batch_size=}')
+            print(f'{bs=}')
     # At this point iterated over all validation images and for each object the result is fed into the pose evaluator
     total_time = time.time() - start_time
     time_per_img = total_time / n_images
@@ -202,8 +211,8 @@ def bop_evaluate(model, matcher, data_loader, image_set, bbox_mode, rotation_mod
     # CSV format: scene_id, im_id, obj_id, score, R, t, time
     counter = 1
     for samples, targets in data_loader:
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # samples = samples.to(device)
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         pred_start_time = time.time()
         outputs, n_boxes_per_sample = model(samples, targets)
         pred_end_time = time.time() - pred_start_time
