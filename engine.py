@@ -164,11 +164,7 @@ def pose_evaluate(model, matcher, pose_evaluator, data_loader, image_set, bbox_m
             eta_str = str(datetime.timedelta(seconds=int(eta)))
             print("Processed {}/{} \t Batch Time: {} \t ETA: {}".format(processed_images, n_images, batch_total_time_str, eta_str))
         except TypeError:
-            # print(f'{targets=}')
-            # print(f'{data_loader=}')
-            # print(f'{dir(data_loader)}')
-            print(f'{data_loader.batch_size=}')
-            print(f'{bs=}')
+            pass
     # At this point iterated over all validation images and for each object the result is fed into the pose evaluator
     total_time = time.time() - start_time
     time_per_img = total_time / n_images
