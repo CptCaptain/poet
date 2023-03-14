@@ -10,10 +10,6 @@
 # Modified from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
-import sys
-
-print(sys.executable)
-
 import argparse
 import datetime
 import json
@@ -202,7 +198,6 @@ def main(args):
 
     # set distributed to false cause we use accelerate...
     args.distributed = False
-    # at some point at least ...
 
     if args.distributed:
         if args.cache_mode:
