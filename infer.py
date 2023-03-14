@@ -30,6 +30,7 @@ from util.quaternion_ops import quat2rot
 from data_utils.data_prefetcher import data_prefetcher
 
 from evaluation_tools.metrics import get_src_permutation_idx, calc_rotation_error, calc_translation_error
+from visualize import vis
 
 
 def get_args_parser():
@@ -110,11 +111,12 @@ def get_args_parser():
     # * Inference mode settings
     parser.add_argument('--visualize', type='store_true', help='Visualize results')
     parser.add_argument('--return_results', type='store_true', help='Return results for further use')
+
+    parser.add_argument('--model_ids', type='nargs+', help='List of model ids in image')
     return parser
 
 
 def init_model_from_checkpoint(args, model, checkpoint):
-    # TODO maybe strip training related stuff...
     missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
     if len(missing_keys) > 0:
@@ -122,7 +124,6 @@ def init_model_from_checkpoint(args, model, checkpoint):
     if len(unexpected_keys) > 0:
         print('Unexpected Keys: {}'.format(unexpected_keys))
     return model
-
 
 
 def main(args):
@@ -135,9 +136,12 @@ def main(args):
     checkpoint = torch.load(args.checkpoint)
     model = init_model_from_checkpoint(args, model, checkpoint)
 
-
     if args.visualize:
-        pass
+        # TODO img besorgen, outputs auseinander parsen
+        img = None
+        model_ids = args.model_ids
+        outputs = model(img)
+        vis(img, model_ids, ests)
     elif args.return_results:
         pass
     return
@@ -155,8 +159,7 @@ def write_to_csv(matcher, n_boxes_per_sample, out_csv_file, outputs, pred_end_ti
         if rotation_mode in ['quat', 'silho_quat']:
             pred_rotations = quat2rot(pred_rotations)
 
-        for cls_idx, img_file, pred_translation, pred_rotation in zip(pred_classes, pred_translations, pred_rotations):
-            obj_id = cls_idx
+        for obj_id, img_file, pred_translation, pred_rotation in zip(pred_classes, pred_translations, pred_rotations):
             score = 1.0
             # CSV format: obj_id, score, R, t, time
             csv_str = "{},{},{} {} {} {} {} {} {} {} {}, {} {} {}, {}\n".format(obj_id, score,
@@ -166,7 +169,6 @@ def write_to_csv(matcher, n_boxes_per_sample, out_csv_file, outputs, pred_end_ti
                                                                                 pred_translation[0] * 1000, pred_translation[1] * 1000, pred_translation[2] * 1000,
                                                                                 pred_end_time)
             out_csv_file.write(csv_str)
-
 
 
 def write_to_bop_csv(matcher, n_boxes_per_sample, out_csv_file, outputs, pred_end_time, rotation_mode, data_loader, targets):
