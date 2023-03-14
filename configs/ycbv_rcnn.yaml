@@ -11,8 +11,8 @@ anchor_sizes:
   - 512
 backbone_str: resnet50-fpn
 input_resize:
-- 480
-- 640
+- 512
+- 512
 label_to_category_id:
   background: 0
   obj_000001: 1
