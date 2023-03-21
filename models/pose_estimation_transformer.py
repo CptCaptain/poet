@@ -87,6 +87,11 @@ class PoET(nn.Module):
             raise NotImplementedError('Class mode is not supported.')
 
         self.num_feature_levels = num_feature_levels
+        self.norm_size = 32
+        if type(backbone[0]).__name__ == 'YOLO':
+            # TODO make sure this is actually sensible
+            self.norm_size = 64         # this value has been chosen to fit our yolov8
+
         if num_feature_levels > 1:
             # Use multi-scale features as input to the transformer
             num_backbone_outs = len(backbone.strides)
@@ -96,7 +101,7 @@ class PoET(nn.Module):
                 in_channels = backbone.num_channels[n]
                 input_proj_list.append(nn.Sequential(
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 ))
             # If more feature levels are required than backbone feature maps are available then the last feature map is
             # passed through an additional 3x3 Conv layer to create a new feature map.
@@ -105,7 +110,7 @@ class PoET(nn.Module):
             for n in range(num_feature_levels - num_backbone_outs):
                 input_proj_list.append(nn.Sequential(
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 ))
                 in_channels = hidden_dim
             self.input_proj = nn.ModuleList(input_proj_list)
@@ -114,7 +119,7 @@ class PoET(nn.Module):
             self.input_proj = nn.ModuleList([
                 nn.Sequential(
                     nn.Conv2d(backbone.num_channels[0], hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 )
             ])
 
