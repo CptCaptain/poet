@@ -44,7 +44,7 @@ def get_args_parser():
     # Learning
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
-    parser.add_argument('--lr_backbone', default=2e-5, type=float)
+    parser.add_argument('--lr_backbone', default=0., type=float)
     parser.add_argument('--lr_linear_proj_names', default=['reference_points', 'sampling_offsets'], type=str, nargs='+')
     parser.add_argument('--lr_linear_proj_mult', default=0.1, type=float)
     parser.add_argument('--batch_size', default=16, type=int)
@@ -57,7 +57,7 @@ def get_args_parser():
                         help='gradient clipping max norm')
 
     # * Backbone
-    parser.add_argument('--backbone', default='yolov4', type=str, choices=['yolov4', 'maskrcnn'],
+    parser.add_argument('--backbone', default='yolov8', type=str, choices=['yolov8', 'yolov4', 'maskrcnn'],
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--backbone_cfg', default='configs/ycbv_yolov4-csp.cfg', type=str,
                         help="Path to the backbone config file to use")
@@ -133,7 +133,7 @@ def get_args_parser():
     parser.add_argument('--eval_set', default="test", type=str, help="Determine on which dataset split to evaluate")
     parser.add_argument('--synt_background', default=None, type=str,
                         help="Directory containing the background images from which to sample")
-    parser.add_argument('--n_classes', default=21, type=int, help="Number of classes present in the dataset")
+    parser.add_argument('--n_classes', default=22, type=int, help="Number of classes present in the dataset")
     parser.add_argument('--jitter_probability', default=0.5, type=float,
                         help='If bbox_mode is set to jitter, this value indicates the probability '
                              'that jitter is applied to a bounding box.')
