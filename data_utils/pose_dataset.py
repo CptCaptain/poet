@@ -50,9 +50,6 @@ class PoseDataset(CocoDetection):
             jitter_probability (float): Probability with which jitter is applied to the bounding box
             std (float): standard deviation of the jitter.
         """
-        # FIXME just for testing, cause this ann file doesnt exist
-        ann_file = '_synt.'.join(str(ann_file).rsplit('.', maxsplit=1))
-
         super(PoseDataset, self).__init__(img_folder, ann_file, synthetic_background,
                                             cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
         self._transforms = transforms
@@ -323,15 +320,27 @@ def make_pose_estimation_transform(image_set, use_rgb_augmentation=False, use_gr
 def build(image_set, args):
     root = Path(args.dataset_path)
     assert root.exists(), f'provided dataset path {root} does not exist'
-    PATHS = {
-        "train": (root / "train", root / "annotations" / f'train.json'),
-        "train_synt": (root / "train", root / "annotations" / f'train_synt.json'),
-        "train_pbr": (root / "train", root / "annotations" / f'train_pbr.json'),
-        "test": (root / "test_all", root / "annotations" / f'test.json'),
-        "keyframes": (root / "test_all", root / "annotations" / f'keyframes.json'),
-        "keyframes_bop": (root / "test_all", root / "annotations"/ f'keyframes_bop.json'),
-        "val": (root / "val", root / "annotations" / f'val.json'),
-    }
+    if args.dataset_path != '/home/nils/datasets/bop/output/':
+        PATHS = {
+            "train": (root / "train", root / "annotations" / f'train.json'),
+            "train_synt": (root / "train", root / "annotations" / f'train_synt.json'),
+            "train_pbr": (root / "train", root / "annotations" / f'train_pbr.json'),
+            "test": (root / "test_all", root / "annotations" / f'test.json'),
+            "keyframes": (root / "test_all", root / "annotations" / f'keyframes.json'),
+            "keyframes_bop": (root / "test_all", root / "annotations"/ f'keyframes_bop.json'),
+            "val": (root / "val", root / "annotations" / f'val.json'),
+        }
+    else:
+        PATHS = {
+            "train": (root, root / "annotations" / f'train.json'),
+            "train_synt": (root, root / "annotations" / f'train_synt.json'),
+            "train_pbr": (root, root / "annotations" / f'train_pbr.json'),
+            "test": (root, root / "annotations" / f'test.json'),
+            "keyframes": (root, root / "annotations" / f'keyframes.json'),
+            "keyframes_bop": (root, root / "annotations"/ f'keyframes_bop.json'),
+            "val": (root, root / "annotations" / f'test.json'),
+        }
+
 
     img_folder, ann_file = PATHS[image_set]
 
