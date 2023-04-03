@@ -30,7 +30,10 @@ class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
         self.strides = backbone.strides
-        self.num_channels = backbone.model.num_channels
+        if hasattr(backbone, 'model'):
+            self.num_channels = backbone.model.num_channels
+        else:
+            self.num_channels = backbone.num_channels
 
     def forward(self, tensor_list: NestedTensor):
         # TODO: Dirty, fix it
@@ -41,24 +44,25 @@ class Joiner(nn.Sequential):
         else:
             self[0].eval()
             preds = self[0](tensor_list)
-            # print(f'{preds=}')
-            # print(f'{len(preds)}')
-            results, predictions, xs = preds
-            for prediction in predictions:
-                prediction = torch.clone(prediction)
-                if prediction is not None:
-                    prediction[:, 5] += 1
-            # out: Dict[str, NestedTensor] = {} # replaced by xs
-            for name, x in xs.items():
-                m = tensor_list.mask
-                # print(f'{name=},{x=}')
-                if isinstance(x, tuple):
-                    print('detupelizing')
-                    x = x[1][1]     # chosen kinda arbitrarily, if it doens't work, change this
-                assert m is not None
-                mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
-                xs[name] = NestedTensor(torch.clone(x), mask)
-            
+            if type(self[0]).__name__ == 'YOLO':
+                results, predictions, xs = preds
+                for prediction in predictions:
+                    prediction = torch.clone(prediction)
+                    if prediction is not None:
+                        prediction[:, 5] += 1
+                # out: Dict[str, NestedTensor] = {} # replaced by xs
+                for name, x in xs.items():
+                    m = tensor_list.mask
+                    # print(f'{name=},{x=}')
+                    if isinstance(x, tuple):
+                        x = x[1][1]     # chosen kinda arbitrarily, if it doens't work, change this
+                    assert m is not None
+                    mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
+                    xs[name] = NestedTensor(torch.clone(x), mask)
+            else:
+                self[0].eval()
+                predictions, xs = self[0](tensor_list)
+                
         out: List[NestedTensor] = []
         pos = []
         for name, x in sorted(xs.items()):
@@ -66,7 +70,8 @@ class Joiner(nn.Sequential):
 
         # position encoding
         for x in out:
-            pos.append(self[1](x).to(x.tensors.dtype))
+            # pos.append(self[1](x).to(x.tensors.dtype))
+            pos.append(self[1](x))
 
         return out, pos, predictions
 

@@ -31,6 +31,47 @@ import data_utils.transforms as T
 from scipy.stats import truncnorm, uniform
 
 
+from PIL import ImageDraw 
+
+
+def get_color(depth_component):
+    # Calculate the color intensity based on the depth_component (z-value)
+    intensity = int(255 * abs(depth_component))
+    return (intensity, 0, 255 - intensity) if depth_component > 0 else (0, intensity, 255 - intensity)
+
+
+def visualize_rotation_axis(image, rotation_matrix, bounding_box):
+    # Load the image
+    draw = ImageDraw.Draw(image)
+
+    # Convert the bounding box coordinates to integers
+    x1, y1, x2, y2 = map(int, bounding_box)
+
+    # Compute the center of the bounding box
+    center = torch.tensor([(x1 + x2) / 2, (y1 + y2) / 2], dtype=torch.float32)
+
+    # Define the rotation axis in the object's local coordinate system
+    rotation_axis_local = torch.tensor([0, 0, 1], dtype=torch.float32)
+
+
+    # Transform the rotation axis to the image coordinate system
+    rotation_axis_image = torch.matmul(rotation_matrix, rotation_axis_local)
+
+    # Scale the rotation axis and translate it to the bounding box center
+    scale = max(x2 - x1, y2 - y1) / 2
+    rotation_axis_image_scaled = center + scale * rotation_axis_image[:2]
+
+    # Get the color of the line based on the depth_component (z-value)
+    depth_color = get_color(rotation_axis_image[2].item())
+
+    # Draw the bounding box and rotation axis
+    draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+    draw.line([tuple(center.numpy()), tuple(rotation_axis_image_scaled.numpy())], fill=depth_color, width=2)
+
+    return image
+
+
+
 class PoseDataset(CocoDetection):
     """
     Pose Estimation Dataset. Returns samples consisting of images and the target containing the class, bounding box and
@@ -120,6 +161,22 @@ class ProcessPoseData(object):
         image_id = torch.tensor([image_id])
 
         anno = target["annotations"]
+        visualize = False
+        if visualize:
+            # limit number of annotations to 5
+            # original data always has 5 annotations per image
+            img = image
+            d = ImageDraw.Draw(img)
+            for t in anno:
+                x0, y0, w, h = t['bbox']
+                x1, y1 = x0 + w, y0 + h
+                rotation_matrix = torch.tensor(t['relative_pose']['rotation']).reshape([3,3])
+                visualize_rotation_axis(img, rotation_matrix, [x0, y0, x1, y1])
+                d.text((x0,y0), str(t['category_id']))
+            image.save('/home/nils/poet_dataset_im_test.png')
+            import random
+            if random.uniform(0, 100) > 90:
+                quit()
 
         anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]
 
