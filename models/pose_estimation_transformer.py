@@ -430,26 +430,30 @@ class PoET(nn.Module):
             # print(f"{torch.mean(torch.tensor(thetas))=}")
 
         # visualize first image of batch
-        if self.visualize and self.batches_seen%100 == 0 and targets is not None:
+        if self.visualize and self.batches_seen%100 == 0:
             img = to_pil_image(samples.tensors[0])
             boxes = pred_boxes[0]
             rot_mats = outputs_rotation[-1][0]
             img_sizes = image_sizes[0]
             # visualize ground truth in blue and thin axis
-            for box, rot_mat in zip(targets[0]['boxes'], targets[0]['relative_rotation']):
-                x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
-                x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
-                visualize_rotation_axis(img, rot_mat.detach().cpu(), [x0, y0, x1, y1], color="#0000ff", thickness=1)
+            if targets is not None:
+                for box, rot_mat in zip(targets[0]['boxes'], targets[0]['relative_rotation']):
+                    x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
+                    x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
+                    visualize_rotation_axis(img, rot_mat.detach().cpu(), [x0, y0, x1, y1], color="#0000ff", thickness=1)
+                    # print(f"{(x0, y0, x1, y1)=}")
             # visualize predictions in red and thick axis
             for box, rot_mat in zip(boxes, rot_mats):
                 x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
                 x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
+                # print(f"{(x0, y0, x1, y1)=}")
                 visualize_rotation_axis(img, rot_mat.detach().cpu(), [x0, y0, x1, y1], color="#ff0000", thickness=4)
 
             if 512 in img_sizes:
                 subfolder = 'new_data'
             else:
                 subfolder = 'old_data'
+            # print(f"{img_sizes=}")
             img.save(f'/media/Data1/poet_results/{subfolder}/poet_output_{self.batches_seen}.png')
         self.batches_seen += 1
 
