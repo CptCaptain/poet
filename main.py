@@ -263,10 +263,17 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
-    model, optimizer, data_loader_train, data_loader_val, lr_scheduler = accelerator.prepare(
-        model, optimizer, data_loader_train, data_loader_val, lr_scheduler
-    )
 
+    import copy
+    def compare_weights(model1, model2, component_name):
+        for (name1, param1), (name2, param2) in zip(model1.named_parameters(), model2.named_parameters()):
+            if not torch.equal(param1, param2):
+                print(f"Difference in {component_name}: {name1}:{param1} vs {name2}:{param2}")
+
+    # Create a deepcopy of the model before loading the checkpoint
+    model_before_loading = copy.deepcopy(model_without_ddp)
+
+    print(f'{model.state_dict()=}')
     # accelerator.watch(model)
     output_dir = Path(args.output_dir)
     # Load checkpoint
@@ -276,6 +283,7 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
+        checkpoint['model'] = {k: v for k, v in checkpoint['model'].items() if not k.startswith('backbone')}
         missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
@@ -289,7 +297,6 @@ def main(args):
             for pg, pg_old in zip(optimizer.param_groups, p_groups):
                 pg['lr'] = pg_old['lr']
                 pg['initial_lr'] = pg_old['initial_lr']
-            print(optimizer.param_groups)
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             # todo: this is a hack for doing experiment that resume from checkpoint and also modify lr scheduler
             #  (e.g., decrease lr in advance).
@@ -299,9 +306,19 @@ def main(args):
                     'Warning: (hack) args.override_resumed_lr_drop is set to True, so args.lr_drop would override lr_drop in resumed lr_scheduler.')
                 lr_scheduler.step_size = args.lr_drop
                 lr_scheduler.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
-            lr_scheduler.step(lr_scheduler.last_epoch)
+            try:
+                lr_scheduler.step(lr_scheduler.last_epoch)
+            except AttributeError:
+                print(f'{lr_scheduler=} has no last_epoch Attribute')
+                lr_scheduler.step(5160)
             args.start_epoch = checkpoint['epoch'] + 1
 
+    # Compare the weights
+    compare_weights(model_before_loading, model_without_ddp, "before and after loading")
+
+    model, optimizer, data_loader_train, data_loader_val, lr_scheduler = accelerator.prepare(
+        model, optimizer, data_loader_train, data_loader_val, lr_scheduler
+    )
     # Evaluate the models performance
     if args.eval:
         if args.resume:
