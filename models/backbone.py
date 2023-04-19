@@ -77,7 +77,9 @@ class Joiner(nn.Sequential):
 
 def build_yolov8(args):
     if not args.backbone_weights:
-        backbone_weights = '/home/nils/ultralytics/runs/detect/train7/weights/best.pt' 
+        # backbone_weights = '/home/nils/ultralytics/runs/detect/train7/weights/best.pt'    # works in sim, but not IRL
+        # backbone_weights = '/home/nils/ultralytics/runs/detect/train54/weights/best.pt'     # works for black squirrel
+        backbone_weights = '/home/nils/ultralytics/runs/detect/train59/weights/best.pt'     # should work for clay squirrel
     else:
         backbone_weights = args.backbone_weights
     # backbone = CNS_YOLO(opts=args, model=backbone_weights, task='cns_detect', return_interim_layers=args.num_feature_levels>1).backbone
