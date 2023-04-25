@@ -436,7 +436,7 @@ class PoET(nn.Module):
             rot_mats = outputs_rotation[-1][0]
             img_sizes = image_sizes[0]
             # visualize ground truth in blue and thin axis
-            if targets is not None:
+            if targets is not None and targets[0] is not None:
                 for box, rot_mat in zip(targets[0]['boxes'], targets[0]['relative_rotation']):
                     x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
                     x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
