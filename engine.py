@@ -201,7 +201,7 @@ def bop_evaluate(model, matcher, data_loader, image_set, bbox_mode, rotation_mod
     Path(output_eval_dir).mkdir(parents=True, exist_ok=True)
 
     out_csv_file = open(output_eval_dir + 'ycbv.csv', 'w')
-    out_csv_file.write("scene_id,im_id,obj_id,score,R,t,time")
+    out_csv_file.write("scene_id,im_id,obj_id,score,R,t,time\n")
     n_images = len(data_loader.dataset.ids)
 
     # CSV format: scene_id, im_id, obj_id, score, R, t, time
