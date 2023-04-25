@@ -13,6 +13,7 @@
 
 import json
 import torch
+import time
 import util.misc as utils
 
 from data_utils.data_prefetcher import data_prefetcher
@@ -21,7 +22,23 @@ from inference_tools.dataset import build_dataset
 from torch.utils.data import DataLoader, SequentialSampler
 
 
-def inference(args):
+def benchmark_model(model, samples, targets, num_iterations=100):
+    model.eval()
+    total_time = 0
+    # warmup
+    for _ in range(50):
+        _, _ = model(samples, targets)
+
+    for _ in range(num_iterations):
+        start_time = time.time()
+        with torch.no_grad():
+            _, _ = model(samples, targets)
+        total_time += time.time() - start_time
+    avg_time = 1000 * total_time / num_iterations
+    return avg_time
+
+
+def inference(args, accelerator):
     """
     Script for Inference with PoET. The datalaoder loads all the images and then iterates over them. PoET processes each
     image and stores the detected objects and their poses in a JSON file. Currently, this script allows only batch sizes
@@ -42,14 +59,22 @@ def inference(args):
     data_loader_inference = DataLoader(dataset_inference, 1, sampler=sampler_inference,
                                        drop_last=False, collate_fn=utils.collate_fn, num_workers=0,
                                        pin_memory=True)
+    model, data_loader_inference = accelerator.prepare(model, data_loader_inference)
 
     prefetcher = data_prefetcher(data_loader_inference, device, prefetch=False)
     samples, targets = prefetcher.next()
+    targets = None
     results = {}
+    benchmark_results = []
     # Iterate over all images, perform pose estimation and store results.
-    for i, idx in enumerate(range(len(data_loader_inference))):
+    for i, idx in enumerate(range(len(data_loader_inference)-900)):
         print("Processing {}/{}".format(i, len(data_loader_inference) - 1))
         outputs, n_boxes_per_sample = model(samples, targets)
+
+        if args.benchmark:
+            avg_time = benchmark_model(model, samples, targets)
+            benchmark_results.append(avg_time)
+            print(f"Average inference time: {avg_time:.4f} milliseconds")
 
         # Iterate over all the detected predictions
         img_file = data_loader_inference.dataset.image_paths[i]
@@ -73,5 +98,10 @@ def inference(args):
     out_file_name = "results.json"
     with open(args.inference_output + out_file_name, 'w') as out_file:
         json.dump(results, out_file)
+
+    if args.benchmark:
+        out_file_name = "benchmark.json"
+        with open(args.inference_output + out_file_name, 'w') as out_file:
+            json.dump({'avg_time': f'{sum(benchmark_results) / len(benchmark_results):.4f}'}, out_file)
     return
 
