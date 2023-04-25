@@ -294,7 +294,9 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        checkpoint['model'] = {k: v for k, v in checkpoint['model'].items() if not k.startswith('backbone')}
+        if args.backbone == 'yolov8':
+            # remove conflicting backbone weights
+            checkpoint['model'] = {k: v for k, v in checkpoint['model'].items() if not k.startswith('backbone')}
         missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
@@ -325,7 +327,7 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
 
     # Compare the weights
-    compare_weights(model_before_loading, model_without_ddp, "before and after loading")
+    # compare_weights(model_before_loading, model_without_ddp, "before and after loading")
 
     model, optimizer, data_loader_train, data_loader_val, lr_scheduler = accelerator.prepare(
         model, optimizer, data_loader_train, data_loader_val, lr_scheduler
