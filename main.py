@@ -159,6 +159,8 @@ def get_args_parser():
                         help="Path to the directory containing the files for inference.")
     parser.add_argument('--inference_output', type=str,
                         help="Path to the directory where the inference results should be stored.")
+    parser.add_argument('--benchmark', action='store_true',
+                        help="Run benchmark during inference and save results to inference_output")
 
     # * Misc
     parser.add_argument('--sgd', action='store_true')
@@ -411,7 +413,7 @@ if __name__ == '__main__':
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     if args.inference:
-        inference(args)
+        inference(args, accelerator)
 
     main(args)
     accelerator.end_training()
