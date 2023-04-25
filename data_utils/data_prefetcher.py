@@ -75,7 +75,7 @@ class data_prefetcher():
         else:
             try:
                 samples, targets = next(self.loader)
-                if not accelerate:
+                if not self.accelerate:
                     samples, targets = to_cuda(samples, targets, self.device)
             except StopIteration:
                 samples = None
