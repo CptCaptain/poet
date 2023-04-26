@@ -20,10 +20,11 @@ def to_cuda(samples, targets, device):
 
 
 class data_prefetcher():
-    def __init__(self, loader, device, prefetch=True):
+    def __init__(self, loader, device, prefetch=True, accelerate=True):
         self.loader = iter(loader)
         self.prefetch = prefetch
         self.device = device
+        self.accelerate = accelerate
         if prefetch:
             self.stream = torch.cuda.Stream()
             self.preload()
@@ -34,6 +35,9 @@ class data_prefetcher():
         except StopIteration:
             self.next_samples = None
             self.next_targets = None
+            return
+        if self.accelerate:
+            # just return when using accelerate, we don't need to explicitly push to device
             return
         # if record_stream() doesn't work, another option is to make sure device inputs are created
         # on the main stream.
@@ -71,7 +75,8 @@ class data_prefetcher():
         else:
             try:
                 samples, targets = next(self.loader)
-                samples, targets = to_cuda(samples, targets, self.device)
+                if not self.accelerate:
+                    samples, targets = to_cuda(samples, targets, self.device)
             except StopIteration:
                 samples = None
                 targets = None

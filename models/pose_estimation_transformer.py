@@ -14,6 +14,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torchvision.transforms.functional import to_pil_image
 
 from util import box_ops
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
@@ -26,6 +27,45 @@ import copy
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
+from PIL import ImageDraw 
+
+
+def get_color(depth_component):
+    # Calculate the color intensity based on the depth_component (z-value)
+    intensity = int(255 * abs(depth_component))
+    return (intensity, 0, 255 - intensity) if depth_component > 0 else (0, intensity, 255 - intensity)
+
+
+def visualize_rotation_axis(image, rotation_matrix, bounding_box, color, thickness=2):
+    # Load the image
+    draw = ImageDraw.Draw(image)
+
+    # Convert the bounding box coordinates to integers
+    x1, y1, x2, y2 = map(int, bounding_box)
+
+    # Compute the center of the bounding box
+    center = torch.tensor([(x1 + x2) / 2, (y1 + y2) / 2], dtype=torch.float32)
+
+    # Define the rotation axis in the object's local coordinate system
+    rotation_axis_local = torch.tensor([0, 0, 1], dtype=torch.float32).detach().cpu()
+
+
+    # Transform the rotation axis to the image coordinate system
+    rotation_axis_image = torch.matmul(rotation_matrix, rotation_axis_local)
+
+    # Scale the rotation axis and translate it to the bounding box center
+    scale = max(x2 - x1, y2 - y1) / 2
+    rotation_axis_image_scaled = center + scale * rotation_axis_image[:2]
+
+    # Get the color of the line based on the depth_component (z-value)
+    depth_color = get_color(rotation_axis_image[2].item())
+
+    # Draw the bounding box and rotation axis
+    draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+    draw.line([tuple(center.numpy()), tuple(rotation_axis_image_scaled.numpy())], fill=depth_color, width=thickness)
+
+    return image
 
 
 class PoET(nn.Module):
@@ -67,6 +107,8 @@ class PoET(nn.Module):
         self.rotation_mode = rotation_mode
         self.class_mode = class_mode
 
+        self.visualize = True
+        self.batches_seen = 0
         # Determine Translation and Rotation head output dimension
         self.t_dim = 3
         if self.rotation_mode == '6d':
@@ -87,6 +129,11 @@ class PoET(nn.Module):
             raise NotImplementedError('Class mode is not supported.')
 
         self.num_feature_levels = num_feature_levels
+        self.norm_size = 32
+        if type(backbone[0]).__name__ == 'YOLO':
+            # TODO make sure this is actually sensible
+            self.norm_size = 64         # this value has been chosen to fit our yolov8
+
         if num_feature_levels > 1:
             # Use multi-scale features as input to the transformer
             num_backbone_outs = len(backbone.strides)
@@ -96,7 +143,7 @@ class PoET(nn.Module):
                 in_channels = backbone.num_channels[n]
                 input_proj_list.append(nn.Sequential(
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 ))
             # If more feature levels are required than backbone feature maps are available then the last feature map is
             # passed through an additional 3x3 Conv layer to create a new feature map.
@@ -105,7 +152,7 @@ class PoET(nn.Module):
             for n in range(num_feature_levels - num_backbone_outs):
                 input_proj_list.append(nn.Sequential(
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 ))
                 in_channels = hidden_dim
             self.input_proj = nn.ModuleList(input_proj_list)
@@ -114,7 +161,7 @@ class PoET(nn.Module):
             self.input_proj = nn.ModuleList([
                 nn.Sequential(
                     nn.Conv2d(backbone.num_channels[0], hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
+                    nn.GroupNorm(self.norm_size, hidden_dim),
                 )
             ])
 
@@ -198,6 +245,11 @@ class PoET(nn.Module):
 
                 # Add classes
                 t_classes = target["labels"]
+
+                if n_boxes > self.n_queries:
+                    print(f'found {n_boxes}, but we want exactly {self.n_queries}.\nTruncating boxes')
+                    t_boxes = t_boxes[:self.n_queries]
+                    t_classes = t_classes[:self.n_queries]
 
                 # For the current number of boxes determine the query embedding
                 query_embed = self.bbox_embedding(t_boxes)
@@ -356,6 +408,55 @@ class PoET(nn.Module):
             outputs_rotation.append(output_rotation)
             outputs_translation.append(output_translation)
 
+        if False:
+            thetas = []
+            d_ts = []
+            for i, (t, out_rot) in enumerate(zip(targets[-1]['relative_rotation'], outputs_rotation[-1][-1])):
+                # print(f"{t=}")
+                # print(f"{out_rot=}")
+                # Figure out the difference between prediction and target
+                R = t @ out_rot.T
+                theta = torch.arccos((torch.trace(R) -1) / 2)
+                theta /= 3.14   # show relative difference, not rad
+                thetas.append(theta)
+                # print(f"{theta=}")
+
+            for ttrans, ptrans in zip(targets[-1]['relative_position'], outputs_translation[-1][-1]):
+                # print(f"{ttrans=}")
+                # print(f"{ptrans=}")
+                # print(f"{ttrans-ptrans=}")
+                d_ts.append(ttrans-ptrans)
+                    
+            # print(f"{torch.mean(torch.tensor(thetas))=}")
+
+        # visualize first image of batch
+        if self.visualize and self.batches_seen%100 == 0:
+            img = to_pil_image(samples.tensors[0])
+            boxes = pred_boxes[0]
+            rot_mats = outputs_rotation[-1][0]
+            img_sizes = image_sizes[0]
+            # visualize ground truth in blue and thin axis
+            if targets is not None and targets[0] is not None:
+                for box, rot_mat in zip(targets[0]['boxes'], targets[0]['relative_rotation']):
+                    x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
+                    x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
+                    visualize_rotation_axis(img, rot_mat.detach().cpu(), [x0, y0, x1, y1], color="#0000ff", thickness=1)
+                    # print(f"{(x0, y0, x1, y1)=}")
+            # visualize predictions in red and thick axis
+            for box, rot_mat in zip(boxes, rot_mats):
+                x0, y0 = (box[0] - box[2]/2) * img_sizes[1], (box[1] - box[3]/2) * img_sizes[0]
+                x1, y1 = (box[0] + box[2]/2) * img_sizes[1], (box[1] + box[3]/2) * img_sizes[0]
+                # print(f"{(x0, y0, x1, y1)=}")
+                visualize_rotation_axis(img, rot_mat.detach().cpu(), [x0, y0, x1, y1], color="#ff0000", thickness=4)
+
+            if 512 in img_sizes:
+                subfolder = 'new_data'
+            else:
+                subfolder = 'old_data'
+            # print(f"{img_sizes=}")
+            img.save(f'/media/Data1/poet_results/{subfolder}/poet_output_{self.batches_seen}.png')
+        self.batches_seen += 1
+
         outputs_rotation = torch.stack(outputs_rotation)
         outputs_translation = torch.stack(outputs_translation)
 
@@ -411,7 +512,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise translation and rotation)
     """
-    def __init__(self, matcher, weight_dict, losses, ):
+    def __init__(self, matcher, weight_dict, losses):
         """ Create the criterion.
         Parameters:
             matcher: module able to compute a matching between targets and proposals
@@ -459,6 +560,7 @@ class SetCriterion(nn.Module):
         theta = torch.clamp(0.5 * (trace - 1), -1 + eps, 1 - eps)
         rad = torch.acos(theta)
         losses = {}
+        # losses["loss_rot"] = rad.sum() / max(n_obj, 1)
         losses["loss_rot"] = rad.sum() / n_obj
         return losses
 

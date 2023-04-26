@@ -10,7 +10,6 @@
 # Modified from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
-
 import argparse
 import datetime
 import json
@@ -27,6 +26,17 @@ from data_utils import build_dataset
 from engine import train_one_epoch, pose_evaluate, bop_evaluate
 from models import build_model
 from evaluation_tools.pose_evaluator_init import build_pose_evaluator
+from inference_tools.inference_engine import inference
+
+# import wandb
+
+import lovely_tensors as lt
+
+lt.monkey_patch()
+
+from accelerate import Accelerator
+
+accelerator = Accelerator(log_with='wandb')
 
 
 def get_args_parser():
@@ -35,7 +45,7 @@ def get_args_parser():
     # Learning
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
-    parser.add_argument('--lr_backbone', default=2e-5, type=float)
+    parser.add_argument('--lr_backbone', default=0., type=float)
     parser.add_argument('--lr_linear_proj_names', default=['reference_points', 'sampling_offsets'], type=str, nargs='+')
     parser.add_argument('--lr_linear_proj_mult', default=0.1, type=float)
     parser.add_argument('--batch_size', default=16, type=int)
@@ -48,7 +58,7 @@ def get_args_parser():
                         help='gradient clipping max norm')
 
     # * Backbone
-    parser.add_argument('--backbone', default='yolov4', type=str, choices=['yolov4', 'maskrcnn'],
+    parser.add_argument('--backbone', default='yolov8', type=str, choices=['yolov8', 'yolov4', 'maskrcnn'],
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--backbone_cfg', default='configs/ycbv_yolov4-csp.cfg', type=str,
                         help="Path to the backbone config file to use")
@@ -122,9 +132,9 @@ def get_args_parser():
                         help='Path to the dataset ')
     parser.add_argument('--train_set', default="train", type=str, help="Determine on which dataset split to train")
     parser.add_argument('--eval_set', default="test", type=str, help="Determine on which dataset split to evaluate")
-    parser.add_argument('--synt_background', default='/background/', type=str,
+    parser.add_argument('--synt_background', default=None, type=str,
                         help="Directory containing the background images from which to sample")
-    parser.add_argument('--n_classes', default=21, type=int, help="Number of classes present in the dataset")
+    parser.add_argument('--n_classes', default=22, type=int, help="Number of classes present in the dataset")
     parser.add_argument('--jitter_probability', default=0.5, type=float,
                         help='If bbox_mode is set to jitter, this value indicates the probability '
                              'that jitter is applied to a bounding box.')
@@ -142,13 +152,23 @@ def get_args_parser():
     parser.add_argument('--model_symmetry', type=str, default='/annotations/symmetries.json',
                         help='path to .json-file containing the class symmetries')
 
+    # * Inference
+    parser.add_argument('--inference', action='store_true',
+                        help="Flag indicating that PoET should be launched in inference mode.")
+    parser.add_argument('--inference_path', type=str,
+                        help="Path to the directory containing the files for inference.")
+    parser.add_argument('--inference_output', type=str,
+                        help="Path to the directory where the inference results should be stored.")
+    parser.add_argument('--benchmark', action='store_true',
+                        help="Run benchmark during inference and save results to inference_output")
+
     # * Misc
     parser.add_argument('--sgd', action='store_true')
     parser.add_argument('--save_interval', default=5, type=int,
                         help="Epoch interval after which the current checkpoint will be stored")
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--device', default='cuda',
+    parser.add_argument('--device', default=accelerator.device,
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
@@ -163,7 +183,7 @@ def get_args_parser():
 
 
 def main(args):
-    utils.init_distributed_mode(args)
+    # utils.init_distributed_mode(args)
 
     device = torch.device(args.device)
 
@@ -186,6 +206,9 @@ def main(args):
     # Build the dataset for training and validation
     dataset_train = build_dataset(image_set=args.train_set, args=args)
     dataset_val = build_dataset(image_set=args.eval_set, args=args)
+
+    # set distributed to false cause we use accelerate...
+    args.distributed = False
 
     if args.distributed:
         if args.cache_mode:
@@ -251,6 +274,18 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
+
+    import copy
+    def compare_weights(model1, model2, component_name):
+        for (name1, param1), (name2, param2) in zip(model1.named_parameters(), model2.named_parameters()):
+            if not torch.equal(param1, param2):
+                print(f"Difference in {component_name}: {name1}:{param1} vs {name2}:{param2}")
+
+    # Create a deepcopy of the model before loading the checkpoint
+    model_before_loading = copy.deepcopy(model_without_ddp)
+
+    print(f'{model.state_dict()=}')
+    # accelerator.watch(model)
     output_dir = Path(args.output_dir)
     # Load checkpoint
     if args.resume:
@@ -259,6 +294,9 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
+        if args.backbone == 'yolov8':
+            # remove conflicting backbone weights
+            checkpoint['model'] = {k: v for k, v in checkpoint['model'].items() if not k.startswith('backbone')}
         missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
@@ -272,7 +310,6 @@ def main(args):
             for pg, pg_old in zip(optimizer.param_groups, p_groups):
                 pg['lr'] = pg_old['lr']
                 pg['initial_lr'] = pg_old['initial_lr']
-            print(optimizer.param_groups)
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             # todo: this is a hack for doing experiment that resume from checkpoint and also modify lr scheduler
             #  (e.g., decrease lr in advance).
@@ -282,9 +319,19 @@ def main(args):
                     'Warning: (hack) args.override_resumed_lr_drop is set to True, so args.lr_drop would override lr_drop in resumed lr_scheduler.')
                 lr_scheduler.step_size = args.lr_drop
                 lr_scheduler.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
-            lr_scheduler.step(lr_scheduler.last_epoch)
+            try:
+                lr_scheduler.step(lr_scheduler.last_epoch)
+            except AttributeError:
+                print(f'{lr_scheduler=} has no last_epoch Attribute')
+                lr_scheduler.step(5160)
             args.start_epoch = checkpoint['epoch'] + 1
 
+    # Compare the weights
+    # compare_weights(model_before_loading, model_without_ddp, "before and after loading")
+
+    model, optimizer, data_loader_train, data_loader_val, lr_scheduler = accelerator.prepare(
+        model, optimizer, data_loader_train, data_loader_val, lr_scheduler
+    )
     # Evaluate the models performance
     if args.eval:
         if args.resume:
@@ -308,7 +355,8 @@ def main(args):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+            model=model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, device=device, epoch=epoch, max_norm=args.clip_max_norm, accelerator=accelerator)
+        accelerator.log(train_stats)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -337,6 +385,7 @@ def main(args):
                          'epoch': epoch,
                          'n_parameters': n_parameters}
 
+        accelerator.log(log_stats)
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -354,8 +403,19 @@ def main(args):
 
 
 if __name__ == '__main__':
+    # wandb.init(entity='nkoch-aitastic', project='poet')
     parser = argparse.ArgumentParser('PoET training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+    accelerator.init_trackers(
+            project_name='poet',
+            config=args,
+            )
+    # wandb.config.update(args)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    if args.inference:
+        inference(args, accelerator)
+
     main(args)
+    accelerator.end_training()

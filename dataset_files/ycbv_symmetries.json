@@ -19,5 +19,6 @@
 	"040_large_marker":false,
 	"051_large_clamp":true,
 	"052_extra_large_clamp":true,
-	"061_foam_brick":true
+	"061_foam_brick":true,
+	"062_squirrel":false
 }

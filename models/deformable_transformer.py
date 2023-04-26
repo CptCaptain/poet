@@ -21,14 +21,16 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from deformable_attention import MSDeformAttn
+# from deformable_attention import MSDeformAttn
+# from MultiScaleDeformableAttention import MSDeformAttn    
+from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention as MSDeformAttn
 
 
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
                  activation="relu", return_intermediate_dec=False,
-                 num_feature_levels=4, dec_n_points=4,  enc_n_points=4):
+                 num_feature_levels=4, dec_n_points=4,  enc_n_points=4, reference_points='bbox'):
         super().__init__()
 
         self.d_model = d_model
@@ -46,7 +48,9 @@ class DeformableTransformer(nn.Module):
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
-        self.reference_points = nn.Linear(d_model, 2)
+        self._reference_points = reference_points
+        if self._reference_points != 'bbox':
+            self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
 
@@ -56,9 +60,10 @@ class DeformableTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
         for m in self.modules():
             if isinstance(m, MSDeformAttn):
-                m._reset_parameters()
-        xavier_uniform_(self.reference_points.weight.data, gain=1.0)
-        constant_(self.reference_points.bias.data, 0.)
+                m.init_weights()
+        if self._reference_points != 'bbox':
+            xavier_uniform_(self.reference_points.weight.data, gain=1.0)
+            constant_(self.reference_points.bias.data, 0.)
         normal_(self.level_embed)
 
     def get_proposal_pos_embed(self, proposals):
@@ -154,6 +159,7 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
         else:
             query_embed, tgt = torch.split(query_embed, c, dim=2)
+
         if reference_points is None:
             reference_points = self.reference_points(query_embed).sigmoid()
         init_reference_out = reference_points
@@ -174,7 +180,12 @@ class DeformableTransformerEncoderLayer(nn.Module):
         super().__init__()
 
         # self attention
-        self.self_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        self.self_attn = MSDeformAttn(
+                embed_dims=d_model, 
+                num_levels=n_levels, 
+                num_heads=n_heads, 
+                num_points=n_points, 
+                batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -198,7 +209,14 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
+        src2 = self.self_attn(
+                query=self.with_pos_embed(src, pos), 
+                reference_points=reference_points, 
+                value=src, 
+                spatial_shapes=spatial_shapes, 
+                level_start_index=level_start_index, 
+                key_padding_mask=padding_mask
+                )
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -245,7 +263,12 @@ class DeformableTransformerDecoderLayer(nn.Module):
         super().__init__()
 
         # cross attention
-        self.cross_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        self.cross_attn = MSDeformAttn(
+                embed_dims=d_model, 
+                num_levels=n_levels, 
+                num_heads=n_heads, 
+                num_points=n_points, 
+                batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -280,9 +303,13 @@ class DeformableTransformerDecoderLayer(nn.Module):
         tgt = self.norm2(tgt)
 
         # cross attention
-        tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
-                               reference_points,
-                               src, src_spatial_shapes, level_start_index, src_padding_mask)
+        tgt2 = self.cross_attn(
+                query=self.with_pos_embed(tgt, query_pos),
+                reference_points=reference_points,
+                value=src, 
+                spatial_shapes=src_spatial_shapes, 
+                level_start_index=level_start_index, 
+                key_padding_mask=src_padding_mask)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
@@ -367,6 +394,7 @@ def build_deforamble_transformer(args):
         return_intermediate_dec=True,
         num_feature_levels=args.num_feature_levels,
         dec_n_points=args.dec_n_points,
-        enc_n_points=args.enc_n_points)
+        enc_n_points=args.enc_n_points,
+        reference_points=args.reference_points)
 
 

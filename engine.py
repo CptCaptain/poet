@@ -33,7 +33,7 @@ from evaluation_tools.metrics import get_src_permutation_idx, calc_rotation_erro
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int,
+                    device: torch.device, epoch: int, accelerator,
                     max_norm: float = 0):
     model.train()
     criterion.train()
@@ -46,7 +46,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True, accelerate=bool(accelerator))
     samples, targets = prefetcher.next()
 
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
@@ -73,7 +73,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
 
         optimizer.zero_grad()
-        losses.backward()
+        accelerator.backward(losses)
         if max_norm > 0:
             grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         else:
@@ -90,7 +90,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    metrics = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    accelerator.log(metrics)
+    return metrics
 
 
 @torch.no_grad()
@@ -118,8 +120,8 @@ def pose_evaluate(model, matcher, pose_evaluator, data_loader, image_set, bbox_m
     processed_images = 0
     for samples, targets in data_loader:
         batch_start_time = time.time()
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # samples = samples.to(device)
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         outputs, n_boxes_per_sample = model(samples, targets)
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
 
@@ -154,12 +156,15 @@ def pose_evaluate(model, matcher, pose_evaluator, data_loader, image_set, bbox_m
 
         batch_total_time = time.time() - batch_start_time
         batch_total_time_str = str(datetime.timedelta(seconds=int(batch_total_time)))
-        processed_images = processed_images + len(targets)
-        remaining_images = n_images - processed_images
-        remaining_batches = remaining_images / bs
-        eta = batch_total_time * remaining_batches
-        eta_str = str(datetime.timedelta(seconds=int(eta)))
-        print("Processed {}/{} \t Batch Time: {} \t ETA: {}".format(processed_images, n_images, batch_total_time_str, eta_str))
+        try:
+            processed_images = processed_images + len(targets)
+            remaining_images = n_images - processed_images
+            remaining_batches = remaining_images / bs
+            eta = batch_total_time * remaining_batches
+            eta_str = str(datetime.timedelta(seconds=int(eta)))
+            print("Processed {}/{} \t Batch Time: {} \t ETA: {}".format(processed_images, n_images, batch_total_time_str, eta_str))
+        except TypeError:
+            pass
     # At this point iterated over all validation images and for each object the result is fed into the pose evaluator
     total_time = time.time() - start_time
     time_per_img = total_time / n_images
@@ -196,14 +201,14 @@ def bop_evaluate(model, matcher, data_loader, image_set, bbox_mode, rotation_mod
     Path(output_eval_dir).mkdir(parents=True, exist_ok=True)
 
     out_csv_file = open(output_eval_dir + 'ycbv.csv', 'w')
-    out_csv_file.write("scene_id,im_id,obj_id,score,R,t,time")
+    out_csv_file.write("scene_id,im_id,obj_id,score,R,t,time\n")
     n_images = len(data_loader.dataset.ids)
 
     # CSV format: scene_id, im_id, obj_id, score, R, t, time
     counter = 1
     for samples, targets in data_loader:
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # samples = samples.to(device)
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         pred_start_time = time.time()
         outputs, n_boxes_per_sample = model(samples, targets)
         pred_end_time = time.time() - pred_start_time
