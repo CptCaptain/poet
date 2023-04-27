@@ -3,6 +3,7 @@ opencv-python
 scipy
 torch
 torchvision
+lovely-tensors
 tqdm
 cython
 pycocotools
@@ -12,4 +13,5 @@ git+https://github.com/JunnYu/mish-cuda.git#egg=mish-cuda
 # git+https://github.com/fundamentalvision/Deformable-DETR.git#egg=MultiScaleDeformableAttention&subdirectory=models/ops  # won't install properly for me
 mmcv-full		# also contains MultiScaleDeformableAttention as a substitute for Deformable-DETR
 accelerate
+wandb
 git+https://github.com/thodan/bop_toolkit.git#egg=bop_toolkit
